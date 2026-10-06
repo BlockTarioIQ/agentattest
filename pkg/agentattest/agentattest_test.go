@@ -145,3 +145,34 @@ func TestVerifierContextRejectsUnverifiedKeys(t *testing.T) {
 		t.Fatal("non-verified keys must be rejected")
 	}
 }
+
+// TestPolicyGradeCIStatement proves a CI-shaped statement reaches policy-grade
+// only with matching verified identity, and fails closed otherwise.
+func TestPolicyGradeCIStatement(t *testing.T) {
+	b := GitBinding{RepoURL: "https://github.com/example/app", BaseCommit: strings.Repeat("a", 40), HeadCommit: strings.Repeat("b", 40), PatchSHA256: strings.Repeat("c", 64)}
+	wf := "https://github.com/example/app/.github/workflows/rhesia.yml@refs/heads/main"
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	st, err := NewStatementV1(b, StatementOptions{
+		AgentName: "example-agent", AgentVersion: "1.0.0", CaptureMethod: "ci-step", InvocationKind: "ci-step",
+		ExecutionType: "github-actions", VerificationLevel: "policy-grade", EvidenceStorage: "artifact-store",
+		Builder: &Builder{ID: wf, Type: "github-actions-workflow", WorkflowRef: wf, RunnerClass: "github-hosted"}, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := map[string]any{"verifiedSigner": wf, "verifiedBuilderId": wf, "verifiedWorkflowRef": wf, "verifiedIssuer": "https://token.actions.githubusercontent.com"}
+	cx, _ := VerifierContext(b, ContextOptions{RequiredLevel: "policy-grade", Verified: verified, Now: now})
+	if r := Verify(context.Background(), st, cx); !r.Valid || r.Level != "policy-grade" {
+		t.Fatalf("policy-grade CI statement must verify: %+v", r)
+	}
+	other := map[string]any{"verifiedSigner": wf, "verifiedBuilderId": "https://github.com/evil/x/.github/workflows/y.yml@refs/heads/main",
+		"verifiedWorkflowRef": "https://github.com/evil/x/.github/workflows/y.yml@refs/heads/main", "verifiedIssuer": "https://token.actions.githubusercontent.com"}
+	cx2, _ := VerifierContext(b, ContextOptions{RequiredLevel: "policy-grade", Verified: other, Now: now})
+	if r := Verify(context.Background(), st, cx2); r.Valid {
+		t.Fatalf("mismatched workflow identity must fail: %+v", r)
+	}
+	cx3, _ := VerifierContext(b, ContextOptions{RequiredLevel: "policy-grade", Now: now})
+	if r := Verify(context.Background(), st, cx3); r.Valid {
+		t.Fatalf("policy-grade without verified identity must fail: %+v", r)
+	}
+}

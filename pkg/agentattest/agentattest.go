@@ -238,6 +238,25 @@ type StatementOptions struct {
 	ModelProvider  string
 	ModelID        string
 	Now            time.Time
+
+	// VerificationLevel claimed by the statement (default evidence-grade).
+	// The verifier only grants it when the context supplies matching verified
+	// identity; claiming more than is verified fails with level_escalation.
+	VerificationLevel string
+	// Builder describes the CI workflow (policy-grade and above). Rego compares
+	// it with verifiedBuilderId / verifiedWorkflowRef from the signature.
+	Builder *Builder
+	// EvidenceStorage overrides the default "local-only" storage of the
+	// generated tool-summary reference (policy-grade forbids local-only).
+	EvidenceStorage string
+}
+
+// Builder is the predicate's environment.builder object.
+type Builder struct {
+	ID          string
+	Type        string // e.g. github-actions-workflow
+	WorkflowRef string
+	RunnerClass string // github-hosted | self-hosted | isolated-runner | witnessed-runner
 }
 
 // NewStatementV1 builds an in-toto Statement v1 with an agentattest v1
@@ -256,6 +275,19 @@ func NewStatementV1(b GitBinding, o StatementOptions) ([]byte, error) {
 	}
 	if o.ExecutionType != "" {
 		pred["environment"].(map[string]any)["executionType"] = o.ExecutionType
+	}
+	if o.VerificationLevel != "" {
+		pred["verificationLevel"] = o.VerificationLevel
+	}
+	if o.Builder != nil {
+		pred["environment"].(map[string]any)["builder"] = map[string]any{
+			"id": o.Builder.ID, "type": o.Builder.Type, "workflowRef": o.Builder.WorkflowRef, "runnerClass": o.Builder.RunnerClass,
+		}
+	}
+	if o.EvidenceStorage != "" {
+		for _, e := range pred["evidence"].([]map[string]any) {
+			e["storage"] = o.EvidenceStorage
+		}
 	}
 	return json.Marshal(predicate.StatementForV1(r, pred))
 }
